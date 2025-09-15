@@ -210,6 +210,41 @@ async def process_video(request: VideoProcessRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando vídeo: {str(e)}")
 
+@app.get("/uploads/{filename}")
+async def serve_uploaded_file(filename: str):
+    """Servir archivo subido"""
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    
+    # Determinar el tipo de media basado en la extensión
+    if filename.lower().endswith('.mp4'):
+        media_type = 'video/mp4'
+    elif filename.lower().endswith('.avi'):
+        media_type = 'video/x-msvideo'
+    elif filename.lower().endswith('.mov'):
+        media_type = 'video/quicktime'
+    elif filename.lower().endswith('.mkv'):
+        media_type = 'video/x-matroska'
+    elif filename.lower().endswith('.webm'):
+        media_type = 'video/webm'
+    else:
+        media_type = 'video/mp4'  # Por defecto
+    
+    response = FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type=media_type
+    )
+    
+    # Añadir cabeceras CORS para permitir uso en canvas
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
+
 @app.get("/download/{filename}")
 async def download_file(filename: str):
     """Descargar archivo procesado"""
@@ -218,11 +253,32 @@ async def download_file(filename: str):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     
-    return FileResponse(
+    # Determinar el tipo de media basado en la extensión
+    if filename.lower().endswith('.mp4'):
+        media_type = 'video/mp4'
+    elif filename.lower().endswith('.avi'):
+        media_type = 'video/x-msvideo'
+    elif filename.lower().endswith('.mov'):
+        media_type = 'video/quicktime'
+    elif filename.lower().endswith('.mkv'):
+        media_type = 'video/x-matroska'
+    elif filename.lower().endswith('.webm'):
+        media_type = 'video/webm'
+    else:
+        media_type = 'video/mp4'  # Por defecto
+    
+    response = FileResponse(
         path=file_path,
         filename=filename,
-        media_type='application/octet-stream'
+        media_type=media_type
     )
+    
+    # Añadir cabeceras CORS para permitir uso en canvas
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 @app.get("/files")
 async def list_files():
@@ -231,21 +287,80 @@ async def list_files():
     
     # Archivos subidos
     for file in os.listdir(UPLOAD_DIR):
+        file_path = os.path.join(UPLOAD_DIR, file)
+        file_size = os.path.getsize(file_path)
         files.append({
             "type": "uploaded",
             "filename": file,
-            "path": f"/uploads/{file}"
+            "file_id": file.split('.')[0],
+            "path": f"/uploads/{file}",
+            "size": file_size,
+            "size_mb": round(file_size / (1024 * 1024), 2)
         })
     
     # Archivos procesados
     for file in os.listdir(OUTPUT_DIR):
+        file_path = os.path.join(OUTPUT_DIR, file)
+        file_size = os.path.getsize(file_path)
         files.append({
             "type": "processed",
             "filename": file,
-            "path": f"/download/{file}"
+            "file_id": file.replace('processed_', '').split('.')[0],
+            "path": f"/download/{file}",
+            "size": file_size,
+            "size_mb": round(file_size / (1024 * 1024), 2)
         })
     
     return {"files": files}
+
+@app.delete("/files/{file_type}/{filename}")
+async def delete_file(file_type: str, filename: str):
+    """Eliminar archivo individual"""
+    if file_type == "uploaded":
+        file_path = os.path.join(UPLOAD_DIR, filename)
+    elif file_type == "processed":
+        file_path = os.path.join(OUTPUT_DIR, filename)
+    else:
+        raise HTTPException(status_code=400, detail="Tipo de archivo inválido")
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    
+    try:
+        os.remove(file_path)
+        return {"message": f"Archivo {filename} eliminado correctamente"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar archivo: {str(e)}")
+
+@app.delete("/files/cleanup")
+async def cleanup_files():
+    """Limpiar todos los archivos"""
+    deleted_count = 0
+    errors = []
+    
+    # Limpiar archivos subidos
+    try:
+        for file in os.listdir(UPLOAD_DIR):
+            file_path = os.path.join(UPLOAD_DIR, file)
+            os.remove(file_path)
+            deleted_count += 1
+    except Exception as e:
+        errors.append(f"Error limpiando uploads: {str(e)}")
+    
+    # Limpiar archivos procesados
+    try:
+        for file in os.listdir(OUTPUT_DIR):
+            file_path = os.path.join(OUTPUT_DIR, file)
+            os.remove(file_path)
+            deleted_count += 1
+    except Exception as e:
+        errors.append(f"Error limpiando outputs: {str(e)}")
+    
+    return {
+        "message": f"Limpieza completada. {deleted_count} archivos eliminados",
+        "deleted_count": deleted_count,
+        "errors": errors
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -7,6 +7,7 @@ const API_BASE_URL = 'http://localhost:8000';
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [fileId, setFileId] = useState(null);
+  const [fileName, setFileName] = useState(null);
   const [videoUrl, setVideoUrl] = useState(null);
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(null);
@@ -30,15 +31,58 @@ function App() {
   const [flipHorizontal, setFlipHorizontal] = useState(false);
   const [flipVertical, setFlipVertical] = useState(false);
   
+  // Estados para gestión de archivos
+  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [processedFiles, setProcessedFiles] = useState([]);
+  const [showFileManagement, setShowFileManagement] = useState(false);
+  
+  // Estados para modal
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState(null); // 'uploaded' o 'processed'
+  const [selectedFileInModal, setSelectedFileInModal] = useState(null);
+  
+  // Estado para carga de video
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
+  
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const progressBarRef = useRef(null);
   const canvasRef = useRef(null);
 
-  // Efectos para control de vídeo
+  // Cargar archivos al inicio
+  useEffect(() => {
+    loadFiles();
+  }, []);
+
+  // Detectar cuando el video se ha cargado
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+
+    const handleLoadedData = () => {
+      setIsVideoLoading(false);
+    };
+
+    const handleError = () => {
+      setIsVideoLoading(false);
+      setError('Error al cargar el video');
+    };
+
+    video.addEventListener('loadeddata', handleLoadedData);
+    video.addEventListener('error', handleError);
+
+    return () => {
+      video.removeEventListener('loadeddata', handleLoadedData);
+      video.removeEventListener('error', handleError);
+    };
+  }, [videoUrl]);
+
+  // Efectos para control de vídeo
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+
+    console.log('Configurando event listeners para video:', videoUrl);
 
     const handleTimeUpdate = () => {
       setCurrentTime(video.currentTime);
@@ -57,12 +101,20 @@ function App() {
     };
 
     const handleLoadedMetadata = () => {
+      console.log('Video metadata cargado, duración:', video.duration);
       setVideoDuration(video.duration);
       setEndTime(video.duration);
     };
 
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
+    const handlePlay = () => {
+      console.log('Video play');
+      setIsPlaying(true);
+    };
+    
+    const handlePause = () => {
+      console.log('Video pause');
+      setIsPlaying(false);
+    };
 
     video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
@@ -70,12 +122,13 @@ function App() {
     video.addEventListener('pause', handlePause);
 
     return () => {
+      console.log('Limpiando event listeners');
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
     };
-  }, [videoUrl, endTime]);
+  }, [videoUrl, endTime, startTime]);
 
   // Efectos para arrastre de marcadores
   useEffect(() => {
@@ -145,6 +198,9 @@ function App() {
       setError(null);
       setSuccess(null);
       setProcessedFile(null);
+      
+      // Mostrar spinner de carga
+      setIsVideoLoading(true);
       
       // Crear URL para preview
       const url = URL.createObjectURL(file);
@@ -269,7 +325,6 @@ function App() {
       document.body.removeChild(link);
 
       setProcessedFile(outputFilename);
-      setSuccess('Vídeo procesado y descargado correctamente');
     } catch (error) {
       setError('Error al procesar el vídeo: ' + (error.response?.data?.detail || error.message));
     } finally {
@@ -286,6 +341,125 @@ function App() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+    }
+  };
+
+  // Funciones para gestión de archivos
+  const loadFiles = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/files`);
+      const files = response.data.files;
+      
+      const uploaded = files.filter(file => file.type === 'uploaded');
+      const processed = files.filter(file => file.type === 'processed');
+      
+      setUploadedFiles(uploaded);
+      setProcessedFiles(processed);
+    } catch (error) {
+      setError('Error al cargar archivos: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  const selectUploadedFile = (file) => {
+    setFileId(file.file_id);
+    setFileName(file.filename);
+    
+    // Mostrar spinner de carga
+    setIsVideoLoading(true);
+    
+    // Resetear controles de edición primero
+    setStartTime(0);
+    setEndTime(null);
+    setSpeed(1.0);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setVideoDuration(0);
+    
+    // Crear URL del video para el reproductor
+    const videoUrl = `${API_BASE_URL}/uploads/${file.filename}`;
+    setVideoUrl(videoUrl);
+    
+    // Crear objeto de archivo simulado para compatibilidad
+    const mockFile = {
+      name: file.filename,
+      size: file.size,
+      type: 'video/mp4' // Asumimos MP4 por defecto
+    };
+    setSelectedFile(mockFile);
+    
+    setSuccess(`Archivo seleccionado: ${file.filename}`);
+    setShowFileManagement(false);
+  };
+
+  const downloadProcessedFile = (filename) => {
+    const downloadUrl = `${API_BASE_URL}/download/${filename}`;
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const deleteFile = async (fileType, filename, showConfirmation = true) => {
+    if (showConfirmation && !window.confirm(`¿Estás seguro de que quieres eliminar ${filename}?`)) {
+      return;
+    }
+
+    try {
+      await axios.delete(`${API_BASE_URL}/files/${fileType}/${filename}`);
+      await loadFiles(); // Recargar lista
+      if (showConfirmation) {
+        setSuccess(`Archivo ${filename} eliminado correctamente`);
+      }
+    } catch (error) {
+      setError('Error al eliminar archivo: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  const cleanupAllFiles = async () => {
+    if (!window.confirm('¿Estás seguro de que quieres eliminar TODOS los archivos? Esta acción no se puede deshacer.')) {
+      return;
+    }
+
+    try {
+      const response = await axios.delete(`${API_BASE_URL}/files/cleanup`);
+      await loadFiles(); // Recargar lista
+      setSuccess(response.data.message);
+    } catch (error) {
+      setError('Error al limpiar archivos: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  // Funciones para modal
+  const openModal = (type) => {
+    setModalType(type);
+    setShowModal(true);
+    setSelectedFileInModal(null);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setModalType(null);
+    setSelectedFileInModal(null);
+  };
+
+  const selectFileInModal = (file) => {
+    setSelectedFileInModal(file);
+  };
+
+  const confirmSelection = () => {
+    if (selectedFileInModal && modalType === 'uploaded') {
+      selectUploadedFile(selectedFileInModal);
+    }
+    closeModal();
+  };
+
+  const getVideoPreviewUrl = (file) => {
+    if (modalType === 'uploaded') {
+      return `${API_BASE_URL}/uploads/${file.filename}`;
+    } else {
+      return `${API_BASE_URL}/download/${file.filename}`;
     }
   };
 
@@ -453,6 +627,22 @@ function App() {
           </button>
         </div>
 
+        {/* Botones discretos de gestión de archivos */}
+        <div className="discrete-file-buttons">
+          <button 
+            className="discrete-modal-trigger-btn discrete-uploaded-btn"
+            onClick={() => openModal('uploaded')}
+          >
+            📁 Videos Subidos ({uploadedFiles.length})
+          </button>
+          <button 
+            className="discrete-modal-trigger-btn discrete-processed-btn"
+            onClick={() => openModal('processed')}
+          >
+            🎬 Videos Procesados ({processedFiles.length})
+          </button>
+        </div>
+
         {/* Información del archivo */}
         {selectedFile && (
           <div className="file-info">
@@ -470,11 +660,21 @@ function App() {
               <video
                 ref={videoRef}
                 src={videoUrl}
+                crossOrigin="anonymous"
                 onLoadedMetadata={handleVideoLoaded}
                 style={{ maxWidth: '100%', maxHeight: '400px' }}
                 className="main-video"
               />
               
+              {/* Spinner de carga */}
+              {isVideoLoading && (
+                <div className="video-loading-overlay">
+                  <div className="video-loading-spinner">
+                    <div className="spinner"></div>
+                    <div className="spinner-text">Cargando video...</div>
+                  </div>
+                </div>
+              )}
               
               {/* Controles personalizados */}
               <div className="video-controls">
@@ -856,19 +1056,155 @@ function App() {
 
         {/* Mensajes de estado */}
         {error && <div className="error">❌ {error}</div>}
-        {success && <div className="success">✅ {success}</div>}
+        
+        {/* Modal de selección de archivos */}
+        {showModal && (
+          <div className="modal-overlay" onClick={closeModal}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2 className="modal-title">
+                  {modalType === 'uploaded' ? '📁 Videos Subidos' : '🎬 Videos Procesados'}
+                </h2>
+                <button className="modal-close" onClick={closeModal}>
+                  ×
+                </button>
+              </div>
 
-        {/* Sección de descarga */}
-        {processedFile && (
-          <div className="download-section">
-            <h3>🎉 ¡Vídeo procesado!</h3>
-            <p>Tu vídeo está listo para descargar</p>
-            <button className="download-btn" onClick={downloadFile}>
-              📥 Descargar Vídeo
-            </button>
+              <div className="modal-grid">
+                {(modalType === 'uploaded' ? uploadedFiles : processedFiles).map((file, index) => (
+                  <div 
+                    key={index} 
+                    className={`file-card ${selectedFileInModal?.filename === file.filename ? 'selected' : ''}`}
+                    onClick={() => selectFileInModal(file)}
+                  >
+                    <div className="file-preview">
+                      {modalType === 'uploaded' ? (
+                        <video 
+                          src={getVideoPreviewUrl(file)}
+                          muted
+                          preload="metadata"
+                        />
+                      ) : (
+                        <video 
+                          src={getVideoPreviewUrl(file)}
+                          muted
+                          preload="metadata"
+                        />
+                      )}
+                    </div>
+                    
+                    <div className="file-info">
+                      <div className="file-name">{file.filename}</div>
+                      <div className="file-size">{file.size_mb} MB</div>
+                    </div>
+
+                    <div className="file-actions">
+                      {modalType === 'uploaded' ? (
+                        <>
+                          <button 
+                            className="file-action-btn select-action-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectUploadedFile(file);
+                              closeModal();
+                            }}
+                          >
+                            Seleccionar
+                          </button>
+                          <button 
+                            className="file-action-btn delete-action-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteFile('uploaded', file.filename);
+                            }}
+                          >
+                            Eliminar
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button 
+                            className="file-action-btn download-action-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadProcessedFile(file.filename);
+                            }}
+                          >
+                            Descargar
+                          </button>
+                          <button 
+                            className="file-action-btn delete-action-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteFile('processed', file.filename);
+                            }}
+                          >
+                            Eliminar
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {modalType === 'uploaded' && (modalType === 'uploaded' ? uploadedFiles : processedFiles).length === 0 && (
+                <div className="empty-state">
+                  No hay videos subidos
+                </div>
+              )}
+
+              {modalType === 'processed' && (modalType === 'uploaded' ? uploadedFiles : processedFiles).length === 0 && (
+                <div className="empty-state">
+                  No hay videos procesados
+                </div>
+              )}
+
+              <div className="modal-footer">
+                <div className="modal-stats">
+                  Total: {(modalType === 'uploaded' ? uploadedFiles : processedFiles).length} archivos
+                </div>
+                <div className="modal-actions">
+                  <button 
+                    className="modal-btn modal-cleanup-btn" 
+                    onClick={async () => {
+                      const fileType = modalType === 'uploaded' ? 'subidos' : 'procesados';
+                      const fileCount = modalType === 'uploaded' ? uploadedFiles.length : processedFiles.length;
+                      
+                      if (window.confirm(`¿Estás seguro de que quieres eliminar TODOS los ${fileCount} archivos ${fileType}? Esta acción no se puede deshacer.`)) {
+                        try {
+                          // Eliminar todos los archivos de una vez
+                          const filesToDelete = modalType === 'uploaded' ? uploadedFiles : processedFiles;
+                          
+                          for (const file of filesToDelete) {
+                            await axios.delete(`${API_BASE_URL}/files/${modalType}/${file.filename}`);
+                          }
+                          
+                          setSuccess(`${fileCount} archivos ${fileType} eliminados correctamente`);
+                          await loadFiles(); // Recargar lista
+                          closeModal();
+                        } catch (error) {
+                          setError('Error al eliminar archivos: ' + (error.response?.data?.detail || error.message));
+                        }
+                      }
+                    }}
+                  >
+                    🗑️ Limpiar Todo
+                  </button>
+                  <button className="modal-btn modal-cancel-btn" onClick={closeModal}>
+                    Cancelar
+                  </button>
+                  {modalType === 'uploaded' && selectedFileInModal && (
+                    <button className="modal-btn modal-confirm-btn" onClick={confirmSelection}>
+                      Seleccionar
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
-        
+
         {/* Canvas oculto para captura de pantalla */}
         <canvas 
           ref={canvasRef}
