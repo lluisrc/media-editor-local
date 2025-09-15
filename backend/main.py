@@ -127,19 +127,27 @@ async def process_video(request: VideoProcessRequest):
     # Construir comando FFmpeg
     cmd = ["ffmpeg", "-i", upload_path]
     
-    # Aplicar recorte temporal si se especifica
-    if start_time > 0:
-        cmd.extend(["-ss", str(start_time)])
-    
-    if end_time:
-        cmd.extend(["-t", str(end_time - start_time)])
-    
     # Construir filtros de vídeo
     video_filters = []
     
     # Aplicar velocidad
     if speed != 1.0 and video_codec:
         video_filters.append(f"setpts={1/speed}*PTS")
+    
+    # Aplicar recorte temporal (los tiempos se aplican al video original)
+    if start_time > 0:
+        cmd.extend(["-ss", str(start_time)])
+    
+    if end_time:
+        # Calcular duración considerando la velocidad
+        original_duration = end_time - start_time
+        if speed != 1.0:
+            # Para velocidad lenta (x0.5), necesitamos más tiempo de input
+            # Para velocidad rápida (x2.0), necesitamos menos tiempo de input
+            input_duration = original_duration / speed
+            cmd.extend(["-t", str(input_duration)])
+        else:
+            cmd.extend(["-t", str(original_duration)])
     
     # Aplicar rotación
     if rotation != 0 and video_codec:

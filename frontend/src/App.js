@@ -232,6 +232,51 @@ function App() {
     }
   };
 
+  const processAndDownload = async () => {
+    if (!fileId) {
+      setError('No hay archivo cargado');
+      return;
+    }
+
+    setIsProcessing(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const processData = {
+        file_id: fileId,
+        start_time: startTime,
+        end_time: endTime,
+        speed: speed,
+        format: downloadFormat,
+        output_format: outputFormat,
+        resolution: resolution || null,
+        rotation: rotation,
+        flip_horizontal: flipHorizontal,
+        flip_vertical: flipVertical
+      };
+
+      const response = await axios.post(`${API_BASE_URL}/process`, processData);
+      const outputFilename = response.data.output_filename;
+
+      // Descargar automáticamente
+      const downloadUrl = `${API_BASE_URL}/download/${outputFilename}`;
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = outputFilename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setProcessedFile(outputFilename);
+      setSuccess('Vídeo procesado y descargado correctamente');
+    } catch (error) {
+      setError('Error al procesar el vídeo: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const downloadFile = () => {
     if (processedFile) {
       const downloadUrl = `${API_BASE_URL}/download/${processedFile}`;
@@ -797,14 +842,14 @@ function App() {
             </div>
 
 
-            {/* Botón de procesamiento */}
+            {/* Botón de procesamiento y descarga */}
             <button
               className="process-btn"
-              onClick={processVideo}
+              onClick={processAndDownload}
               disabled={isProcessing}
             >
               {isProcessing && <span className="loading"></span>}
-              {isProcessing ? 'Procesando...' : '🎬 Procesar Vídeo'}
+              {isProcessing ? 'Procesando...' : '🎬 Procesar y Descargar'}
             </button>
           </div>
         )}
