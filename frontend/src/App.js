@@ -464,7 +464,7 @@ function App() {
         end_time: endTime,
         speed: speed,
         format: downloadFormat,
-        output_format: fileType === 'video' ? outputFormat : audioOutputFormat,
+        output_format: downloadFormat === 'audio-only' ? audioOutputFormat : (fileType === 'video' ? outputFormat : audioOutputFormat),
         resolution: finalResolution || null,
         rotation: rotation,
         flip_horizontal: flipHorizontal,
@@ -519,7 +519,7 @@ function App() {
         end_time: endTime,
         speed: speed,
         format: downloadFormat,
-        output_format: fileType === 'video' ? outputFormat : audioOutputFormat,
+        output_format: downloadFormat === 'audio-only' ? audioOutputFormat : (fileType === 'video' ? outputFormat : audioOutputFormat),
         resolution: finalResolution || null,
         rotation: rotation,
         flip_horizontal: flipHorizontal,
@@ -928,7 +928,7 @@ function App() {
             className="discrete-modal-trigger-btn discrete-processed-btn"
             onClick={() => openModal('processed')}
           >
-            🎵🎬 Archivos Procesados ({processedFiles.length})
+            🎵🎬📸 Archivos Procesados ({processedFiles.length})
           </button>
         </div>
 
@@ -1553,7 +1553,7 @@ function App() {
               )}
 
               {/* Formato de salida para audio */}
-              {fileType === 'audio' && (
+              {(fileType === 'audio' || downloadFormat === 'audio-only') && (
                 <div className="control-group">
                   <label>Formato Audio</label>
                   <select
@@ -1699,7 +1699,7 @@ function App() {
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h2 className="modal-title">
-                  {modalType === 'uploaded' ? '📁 Archivos Subidos' : '🎵🎬 Archivos Procesados'}
+                  {modalType === 'uploaded' ? '📁 Archivos Subidos' : '🎵🎬📸 Archivos Procesados'}
                 </h2>
                 <button className="modal-close" onClick={closeModal}>
                   ×
