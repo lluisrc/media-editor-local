@@ -28,6 +28,7 @@ class MediaProcessRequest(BaseModel):
     volume: float = 1.0
     fade_in: float = 0.0
     fade_out: float = 0.0
+    audio_effect: str = "none"  # none, echo, reverb, lowpass, highpass, normalize
 
 # Configurar CORS para permitir requests desde React
 app.add_middleware(
@@ -105,6 +106,7 @@ async def process_media(request: MediaProcessRequest):
     volume = request.volume
     fade_in = request.fade_in
     fade_out = request.fade_out
+    audio_effect = request.audio_effect
     
     # Buscar archivo original
     upload_path = None
@@ -230,6 +232,18 @@ async def process_media(request: MediaProcessRequest):
             fade_start = f"duration-{fade_out}"
         audio_filters.append(f"afade=t=out:st={fade_start}:d={fade_out}")
     
+    # Aplicar efectos de audio
+    if audio_effect != "none" and audio_codec:
+        if audio_effect == "echo":
+            audio_filters.append("aecho=0.8:0.88:60:0.4")
+        elif audio_effect == "reverb":
+            audio_filters.append("areverb")
+        elif audio_effect == "lowpass":
+            audio_filters.append("lowpass=f=3000")
+        elif audio_effect == "highpass":
+            audio_filters.append("highpass=f=200")
+        elif audio_effect == "normalize":
+            audio_filters.append("loudnorm")
     
     # Aplicar filtros de audio si existen
     if audio_filters and audio_codec:

@@ -9,6 +9,8 @@ function App() {
   const [fileId, setFileId] = useState(null);
   const [fileName, setFileName] = useState(null);
   const [videoUrl, setVideoUrl] = useState(null);
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [fileType, setFileType] = useState(null); // 'video' or 'audio'
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(null);
   const [speed, setSpeed] = useState(1.0);
@@ -18,6 +20,7 @@ function App() {
   const [success, setSuccess] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [downloadFormat, setDownloadFormat] = useState('video+audio');
@@ -25,11 +28,18 @@ function App() {
   const [isDraggingEnd, setIsDraggingEnd] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [outputFormat, setOutputFormat] = useState('mp4');
+  const [audioOutputFormat, setAudioOutputFormat] = useState('mp3');
   const [resolution, setResolution] = useState('');
   const [customResolution, setCustomResolution] = useState({ width: '', height: '' });
   const [rotation, setRotation] = useState(0);
   const [flipHorizontal, setFlipHorizontal] = useState(false);
   const [flipVertical, setFlipVertical] = useState(false);
+  
+  // Audio-specific states
+  const [volume, setVolume] = useState(1.0);
+  const [fadeIn, setFadeIn] = useState(0);
+  const [fadeOut, setFadeOut] = useState(0);
+  const [isAudioLoading, setIsAudioLoading] = useState(false);
   
   // Estados para gestión de archivos
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -46,6 +56,7 @@ function App() {
   
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
   const progressBarRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -76,6 +87,29 @@ function App() {
       video.removeEventListener('error', handleError);
     };
   }, [videoUrl]);
+
+  // Detectar cuando el audio se ha cargado
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleLoadedData = () => {
+      setIsAudioLoading(false);
+    };
+
+    const handleError = () => {
+      setIsAudioLoading(false);
+      setError('Error al cargar el audio');
+    };
+
+    audio.addEventListener('loadeddata', handleLoadedData);
+    audio.addEventListener('error', handleError);
+
+    return () => {
+      audio.removeEventListener('loadeddata', handleLoadedData);
+      audio.removeEventListener('error', handleError);
+    };
+  }, [audioUrl]);
 
   // Efectos para control de vídeo
   useEffect(() => {
@@ -130,6 +164,59 @@ function App() {
     };
   }, [videoUrl, endTime, startTime]);
 
+  // Efectos para control de audio
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !audioUrl) return;
+
+    console.log('Configurando event listeners para audio:', audioUrl);
+
+    const handleTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+      
+      // Pausar audio cuando llegue al punto de corte final
+      if (endTime && audio.currentTime >= endTime) {
+        audio.pause();
+        setIsPlaying(false);
+      }
+      
+      // Pausar audio si está antes del punto de inicio (si hay selección)
+      if (startTime > 0 && audio.currentTime < startTime) {
+        audio.pause();
+        setIsPlaying(false);
+      }
+    };
+
+    const handleLoadedMetadata = () => {
+      console.log('Audio metadata cargado, duración:', audio.duration);
+      setAudioDuration(audio.duration);
+      setEndTime(audio.duration);
+    };
+
+    const handlePlay = () => {
+      console.log('Audio play');
+      setIsPlaying(true);
+    };
+    
+    const handlePause = () => {
+      console.log('Audio pause');
+      setIsPlaying(false);
+    };
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handlePause);
+
+    return () => {
+      console.log('Limpiando event listeners de audio');
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handlePause);
+    };
+  }, [audioUrl, endTime, startTime]);
+
   // Efectos para arrastre de marcadores
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -159,11 +246,31 @@ function App() {
   // Efecto para aplicar velocidad de reproducción en tiempo real
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
-
-    // Aplicar velocidad de reproducción
-    video.playbackRate = speed;
+    const audio = audioRef.current;
+    
+    if (video) {
+      video.playbackRate = speed;
+    }
+    if (audio) {
+      audio.playbackRate = speed;
+    }
   }, [speed]);
+
+  // Efecto para aplicar volumen en tiempo real
+  useEffect(() => {
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    
+    // Limitar el volumen del elemento HTML a máximo 1.0
+    const htmlVolume = Math.min(volume, 1.0);
+    
+    if (video) {
+      video.volume = htmlVolume;
+    }
+    if (audio) {
+      audio.volume = htmlVolume;
+    }
+  }, [volume]);
 
   // Efecto para aplicar transformaciones visuales en tiempo real
   useEffect(() => {
@@ -193,28 +300,54 @@ function App() {
 
 
   const handleFileSelect = (file) => {
-    if (file && file.type.startsWith('video/')) {
+    if (file && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
       setSelectedFile(file);
       setError(null);
       setSuccess(null);
       setProcessedFile(null);
       
+      // Determinar tipo de archivo
+      const isVideo = file.type.startsWith('video/');
+      const isAudio = file.type.startsWith('audio/');
+      
+      setFileType(isVideo ? 'video' : 'audio');
+      
       // Mostrar spinner de carga
-      setIsVideoLoading(true);
+      if (isVideo) {
+        setIsVideoLoading(true);
+      } else {
+        setIsAudioLoading(true);
+      }
       
       // Crear URL para preview
       const url = URL.createObjectURL(file);
-      setVideoUrl(url);
+      if (isVideo) {
+        setVideoUrl(url);
+        setAudioUrl(null);
+      } else {
+        setAudioUrl(url);
+        setVideoUrl(null);
+      }
       
       // Resetear controles
       setStartTime(0);
       setEndTime(null);
       setSpeed(1.0);
+      setVolume(1.0);
+      setFadeIn(0);
+      setFadeOut(0);
+      
+      // Configurar formato de descarga según tipo de archivo
+      if (isAudio) {
+        setDownloadFormat('audio-only');
+      } else {
+        setDownloadFormat('video+audio');
+      }
       
       // Subir archivo al servidor
       uploadFile(file);
     } else {
-      setError('Por favor selecciona un archivo de vídeo válido');
+      setError('Por favor selecciona un archivo de vídeo o audio válido');
     }
   };
 
@@ -270,11 +403,15 @@ function App() {
         end_time: endTime,
         speed: speed,
         format: downloadFormat,
-        output_format: outputFormat,
+        output_format: fileType === 'video' ? outputFormat : audioOutputFormat,
         resolution: resolution || null,
         rotation: rotation,
         flip_horizontal: flipHorizontal,
-        flip_vertical: flipVertical
+        flip_vertical: flipVertical,
+        // Audio-specific parameters
+        volume: volume,
+        fade_in: fadeIn,
+        fade_out: fadeOut
       };
 
       const response = await axios.post(`${API_BASE_URL}/process`, processData);
@@ -305,11 +442,15 @@ function App() {
         end_time: endTime,
         speed: speed,
         format: downloadFormat,
-        output_format: outputFormat,
+        output_format: fileType === 'video' ? outputFormat : audioOutputFormat,
         resolution: resolution || null,
         rotation: rotation,
         flip_horizontal: flipHorizontal,
-        flip_vertical: flipVertical
+        flip_vertical: flipVertical,
+        // Audio-specific parameters
+        volume: volume,
+        fade_in: fadeIn,
+        fade_out: fadeOut
       };
 
       const response = await axios.post(`${API_BASE_URL}/process`, processData);
@@ -364,26 +505,53 @@ function App() {
     setFileId(file.file_id);
     setFileName(file.filename);
     
+    // Determinar tipo de archivo basado en la extensión
+    const isVideo = /\.(mp4|avi|mov|mkv|webm|flv)$/i.test(file.filename);
+    const isAudio = /\.(mp3|wav|flac|aac|ogg|m4a)$/i.test(file.filename);
+    
+    setFileType(isVideo ? 'video' : 'audio');
+    
     // Mostrar spinner de carga
-    setIsVideoLoading(true);
+    if (isVideo) {
+      setIsVideoLoading(true);
+    } else {
+      setIsAudioLoading(true);
+    }
     
     // Resetear controles de edición primero
     setStartTime(0);
     setEndTime(null);
     setSpeed(1.0);
+    setVolume(1.0);
+    setFadeIn(0);
+    setFadeOut(0);
     setCurrentTime(0);
     setIsPlaying(false);
     setVideoDuration(0);
+    setAudioDuration(0);
     
-    // Crear URL del video para el reproductor
-    const videoUrl = `${API_BASE_URL}/uploads/${file.filename}`;
-    setVideoUrl(videoUrl);
+    // Configurar formato de descarga según tipo de archivo
+    if (isAudio) {
+      setDownloadFormat('audio-only');
+    } else {
+      setDownloadFormat('video+audio');
+    }
+    
+    // Crear URL del archivo para el reproductor
+    const fileUrl = `${API_BASE_URL}/uploads/${file.filename}`;
+    if (isVideo) {
+      setVideoUrl(fileUrl);
+      setAudioUrl(null);
+    } else {
+      setAudioUrl(fileUrl);
+      setVideoUrl(null);
+    }
     
     // Crear objeto de archivo simulado para compatibilidad
     const mockFile = {
       name: file.filename,
       size: file.size,
-      type: 'video/mp4' // Asumimos MP4 por defecto
+      type: isVideo ? 'video/mp4' : 'audio/mp3'
     };
     setSelectedFile(mockFile);
     
@@ -469,26 +637,32 @@ function App() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Funciones de control de vídeo
+  // Funciones de control de audio/video
   const togglePlayPause = () => {
     const video = videoRef.current;
-    if (video) {
-      if (video.paused) {
-        // Si hay una selección y el vídeo está fuera del rango, ir al inicio
-        if (startTime > 0 && video.currentTime < startTime) {
-          video.currentTime = startTime;
+    const audio = audioRef.current;
+    const media = video || audio;
+    
+    if (media) {
+      if (media.paused) {
+        // Si hay una selección y el media está fuera del rango, ir al inicio
+        if (startTime > 0 && media.currentTime < startTime) {
+          media.currentTime = startTime;
         }
-        video.play();
+        media.play();
       } else {
-        video.pause();
+        media.pause();
       }
     }
   };
 
   const seekTo = (time) => {
     const video = videoRef.current;
-    if (video) {
-      video.currentTime = time;
+    const audio = audioRef.current;
+    const media = video || audio;
+    
+    if (media) {
+      media.currentTime = time;
     }
   };
 
@@ -497,7 +671,8 @@ function App() {
   };
 
   const goToEndOfSelection = () => {
-    seekTo(endTime || videoDuration);
+    const duration = fileType === 'video' ? videoDuration : audioDuration;
+    seekTo(endTime || duration);
   };
 
 
@@ -548,7 +723,8 @@ function App() {
     const rect = progressBar.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const percentage = clickX / rect.width;
-    const newTime = percentage * videoDuration;
+    const duration = fileType === 'video' ? videoDuration : audioDuration;
+    const newTime = percentage * duration;
     
     seekTo(newTime);
   };
@@ -560,9 +736,10 @@ function App() {
     const rect = progressBar.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const percentage = Math.max(0, Math.min(1, clickX / rect.width));
-    const newTime = percentage * videoDuration;
+    const duration = fileType === 'video' ? videoDuration : audioDuration;
+    const newTime = percentage * duration;
     
-    if (newTime < (endTime || videoDuration)) {
+    if (newTime < (endTime || duration)) {
       setStartTime(newTime);
     }
   };
@@ -574,7 +751,8 @@ function App() {
     const rect = progressBar.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const percentage = Math.max(0, Math.min(1, clickX / rect.width));
-    const newTime = percentage * videoDuration;
+    const duration = fileType === 'video' ? videoDuration : audioDuration;
+    const newTime = percentage * duration;
     
     if (newTime > startTime) {
       setEndTime(newTime);
@@ -588,16 +766,28 @@ function App() {
     return 0;
   };
 
+  const getAudioDuration = () => {
+    if (audioRef.current) {
+      return audioRef.current.duration;
+    }
+    return 0;
+  };
+
   const handleVideoLoaded = () => {
     const duration = getVideoDuration();
+    setEndTime(duration);
+  };
+
+  const handleAudioLoaded = () => {
+    const duration = getAudioDuration();
     setEndTime(duration);
   };
 
   return (
     <div className="container">
       <div className="header">
-        <h1>🎬 Media Editor</h1>
-        <p>Edita tus vídeos de forma sencilla y rápida</p>
+        <h1>🎵🎬 Media Editor</h1>
+        <p>Edita tus audios y vídeos de forma sencilla y rápida</p>
       </div>
 
       <div className="main-content">
@@ -608,14 +798,14 @@ function App() {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          <div className="upload-icon">📁</div>
+          <div className="upload-icon">🎵🎬</div>
           <div className="upload-text">
-            Arrastra tu vídeo aquí o haz clic para seleccionar
+            Arrastra tu audio o vídeo aquí o haz clic para seleccionar
           </div>
           <input
             ref={fileInputRef}
             type="file"
-            accept="video/*"
+            accept="video/*,audio/*"
             onChange={(e) => handleFileSelect(e.target.files[0])}
             className="file-input"
           />
@@ -623,7 +813,7 @@ function App() {
             className="upload-btn"
             onClick={() => fileInputRef.current?.click()}
           >
-            Seleccionar Vídeo
+            Seleccionar Audio/Video
           </button>
         </div>
 
@@ -633,23 +823,23 @@ function App() {
             className="discrete-modal-trigger-btn discrete-uploaded-btn"
             onClick={() => openModal('uploaded')}
           >
-            📁 Videos Subidos ({uploadedFiles.length})
+            📁 Archivos Subidos ({uploadedFiles.length})
           </button>
           <button 
             className="discrete-modal-trigger-btn discrete-processed-btn"
             onClick={() => openModal('processed')}
           >
-            🎬 Videos Procesados ({processedFiles.length})
+            🎵🎬 Archivos Procesados ({processedFiles.length})
           </button>
         </div>
 
         {/* Información del archivo */}
         {selectedFile && (
           <div className="file-info">
-            <h3>📄 Archivo seleccionado</h3>
+            <h3>{fileType === 'video' ? '🎬' : '🎵'} Archivo seleccionado</h3>
             <p><strong>Nombre:</strong> {selectedFile.name}</p>
             <p><strong>Tamaño:</strong> {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
-            <p><strong>Tipo:</strong> {selectedFile.type}</p>
+            <p><strong>Tipo:</strong> {fileType === 'video' ? 'Video' : 'Audio'} - {selectedFile.type}</p>
           </div>
         )}
 
@@ -770,6 +960,136 @@ function App() {
           </div>
         )}
 
+        {/* Preview del audio con controles avanzados */}
+        {audioUrl && (
+          <div className="audio-preview">
+            <div className="audio-container">
+              <div className="audio-visualizer">
+                <div className="audio-waveform">
+                  <div className="waveform-bars">
+                    {Array.from({ length: 50 }, (_, i) => (
+                      <div 
+                        key={i} 
+                        className="waveform-bar"
+                        style={{ 
+                          height: `${Math.random() * 100}%`,
+                          animationDelay: `${i * 0.1}s`
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="audio-info">
+                  <div className="audio-title">🎵 {selectedFile?.name}</div>
+                  <div className="audio-duration">
+                    {formatTime(currentTime)} / {formatTime(audioDuration)}
+                  </div>
+                </div>
+              </div>
+              
+              <audio
+                ref={audioRef}
+                src={audioUrl}
+                crossOrigin="anonymous"
+                onLoadedMetadata={handleAudioLoaded}
+                className="main-audio"
+              />
+              
+              {/* Spinner de carga */}
+              {isAudioLoading && (
+                <div className="audio-loading-overlay">
+                  <div className="audio-loading-spinner">
+                    <div className="spinner"></div>
+                    <div className="spinner-text">Cargando audio...</div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Controles personalizados */}
+              <div className="audio-controls">
+                <button 
+                  className="play-pause-btn"
+                  onClick={togglePlayPause}
+                >
+                  {isPlaying ? '⏸️' : '▶️'}
+                </button>
+                
+                <button 
+                  className="seek-btn start-seek-btn"
+                  onClick={goToStartOfSelection}
+                  title="Ir al inicio del recorte"
+                >
+                  ⏮️
+                </button>
+                
+                <button 
+                  className="seek-btn end-seek-btn"
+                  onClick={goToEndOfSelection}
+                  title="Ir al final del recorte"
+                >
+                  ⏭️
+                </button>
+                
+                <div className="time-display">
+                  {formatTime(currentTime)} / {formatTime(audioDuration)}
+                  {speed !== 1.0 && (
+                    <span className="speed-indicator">
+                      ⚡ {speed}x
+                    </span>
+                  )}
+                  {(startTime > 0 || (endTime && endTime < audioDuration)) && (
+                    <span className="selection-mode-indicator">
+                      🎵 Modo Selección
+                    </span>
+                  )}
+                </div>
+                
+                <div className="progress-container">
+                  <div 
+                    ref={progressBarRef}
+                    className="progress-bar"
+                    onClick={handleProgressClick}
+                  >
+                    <div 
+                      className="progress-fill"
+                      style={{ width: `${(currentTime / audioDuration) * 100}%` }}
+                    />
+                    
+                    {/* Marcador de inicio */}
+                    <div 
+                      className="start-marker"
+                      style={{ left: `${(startTime / audioDuration) * 100}%` }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setIsDraggingStart(true);
+                      }}
+                    />
+                    
+                    {/* Marcador de fin */}
+                    <div 
+                      className="end-marker"
+                      style={{ left: `${((endTime || audioDuration) / audioDuration) * 100}%` }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setIsDraggingEnd(true);
+                      }}
+                    />
+                    
+                    {/* Área de selección */}
+                    <div 
+                      className="selection-area"
+                      style={{
+                        left: `${(startTime / audioDuration) * 100}%`,
+                        width: `${(((endTime || audioDuration) - startTime) / audioDuration) * 100}%`
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Controles de edición */}
         {fileId && (
           <div className="controls-section">
@@ -778,10 +1098,10 @@ function App() {
             {/* Información de selección */}
             <div className="selection-info">
               <span className="selection-time">
-                {formatTime(startTime)} - {formatTime(endTime || videoDuration)}
+                {formatTime(startTime)} - {formatTime(endTime || (fileType === 'video' ? videoDuration : audioDuration))}
               </span>
               <span className="selection-duration">
-                {formatTime((endTime || videoDuration) - startTime)}
+                {formatTime((endTime || (fileType === 'video' ? videoDuration : audioDuration)) - startTime)}
               </span>
             </div>
 
@@ -793,7 +1113,7 @@ function App() {
                   <input
                     type="number"
                     min="0"
-                    max={videoDuration}
+                    max={fileType === 'video' ? videoDuration : audioDuration}
                     step="0.1"
                     value={startTime}
                     onChange={(e) => setStartTime(parseFloat(e.target.value) || 0)}
@@ -804,7 +1124,7 @@ function App() {
                   <input
                     type="number"
                     min="0"
-                    max={videoDuration}
+                    max={fileType === 'video' ? videoDuration : audioDuration}
                     step="0.1"
                     value={endTime || ''}
                     onChange={(e) => setEndTime(parseFloat(e.target.value) || null)}
@@ -901,6 +1221,65 @@ function App() {
               </div>
             </div>
 
+            {/* Controles de audio específicos */}
+            {fileType === 'audio' && (
+              <div className="audio-controls-row">
+                <div className="volume-controls">
+                  <label>Volumen</label>
+                  <div className="volume-slider-container">
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={volume}
+                      onChange={(e) => setVolume(parseFloat(e.target.value))}
+                      className="volume-slider"
+                    />
+                    <span className="volume-value">
+                      {Math.round(volume * 100)}%
+                      {volume > 1.0 && (
+                        <span className="volume-note"> (Preview: 100%)</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="volume-info">
+                    <small>El preview se limita a 100%, pero el volumen real se aplicará al procesar</small>
+                  </div>
+                </div>
+                
+                <div className="fade-controls">
+                  <label>Fade In/Out</label>
+                  <div className="fade-inputs">
+                    <div className="fade-input-group">
+                      <label>Fade In (s)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10"
+                        step="0.1"
+                        value={fadeIn}
+                        onChange={(e) => setFadeIn(parseFloat(e.target.value) || 0)}
+                        className="fade-input"
+                      />
+                    </div>
+                    <div className="fade-input-group">
+                      <label>Fade Out (s)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10"
+                        step="0.1"
+                        value={fadeOut}
+                        onChange={(e) => setFadeOut(parseFloat(e.target.value) || 0)}
+                        className="fade-input"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+              </div>
+            )}
 
             {/* Formato, Resolución y Descarga */}
             <div className="format-resolution-row">
@@ -919,9 +1298,9 @@ function App() {
               </div>
 
               {/* Formato de salida */}
-              {downloadFormat !== 'audio-only' && (
+              {downloadFormat !== 'audio-only' && fileType === 'video' && (
                 <div className="control-group">
-                  <label>Formato</label>
+                  <label>Formato Video</label>
                   <select
                     value={outputFormat}
                     onChange={(e) => setOutputFormat(e.target.value)}
@@ -937,8 +1316,27 @@ function App() {
                 </div>
               )}
 
+              {/* Formato de salida para audio */}
+              {fileType === 'audio' && (
+                <div className="control-group">
+                  <label>Formato Audio</label>
+                  <select
+                    value={audioOutputFormat}
+                    onChange={(e) => setAudioOutputFormat(e.target.value)}
+                    className="format-select"
+                  >
+                    <option value="mp3">MP3</option>
+                    <option value="wav">WAV</option>
+                    <option value="flac">FLAC</option>
+                    <option value="aac">AAC</option>
+                    <option value="ogg">OGG</option>
+                    <option value="m4a">M4A</option>
+                  </select>
+                </div>
+              )}
+
               {/* Resolución */}
-              {downloadFormat !== 'audio-only' && (
+              {downloadFormat !== 'audio-only' && fileType === 'video' && (
                 <div className="control-group">
                   <label>Resolución</label>
                   <select
@@ -1005,7 +1403,7 @@ function App() {
               )}
 
               {/* Rotación y volteo */}
-              {downloadFormat !== 'audio-only' && (
+              {downloadFormat !== 'audio-only' && fileType === 'video' && (
                 <div className="control-group">
                   <label>Rotación</label>
                   <select
@@ -1049,7 +1447,7 @@ function App() {
               disabled={isProcessing}
             >
               {isProcessing && <span className="loading"></span>}
-              {isProcessing ? 'Procesando...' : '🎬 Procesar y Descargar'}
+              {isProcessing ? 'Procesando...' : `${fileType === 'video' ? '🎬' : '🎵'} Procesar y Descargar`}
             </button>
           </div>
         )}
@@ -1063,7 +1461,7 @@ function App() {
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h2 className="modal-title">
-                  {modalType === 'uploaded' ? '📁 Videos Subidos' : '🎬 Videos Procesados'}
+                  {modalType === 'uploaded' ? '📁 Archivos Subidos' : '🎵🎬 Archivos Procesados'}
                 </h2>
                 <button className="modal-close" onClick={closeModal}>
                   ×
@@ -1150,13 +1548,13 @@ function App() {
 
               {modalType === 'uploaded' && (modalType === 'uploaded' ? uploadedFiles : processedFiles).length === 0 && (
                 <div className="empty-state">
-                  No hay videos subidos
+                  No hay archivos subidos
                 </div>
               )}
 
               {modalType === 'processed' && (modalType === 'uploaded' ? uploadedFiles : processedFiles).length === 0 && (
                 <div className="empty-state">
-                  No hay videos procesados
+                  No hay archivos procesados
                 </div>
               )}
 
@@ -1208,6 +1606,12 @@ function App() {
         {/* Canvas oculto para captura de pantalla */}
         <canvas 
           ref={canvasRef}
+          style={{ display: 'none' }}
+        />
+        
+        {/* Audio oculto para reproducción */}
+        <audio 
+          ref={audioRef}
           style={{ display: 'none' }}
         />
       </div>
