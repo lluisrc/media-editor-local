@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './index.css';
 
@@ -10,7 +10,8 @@ function App() {
   const [fileName, setFileName] = useState(null);
   const [videoUrl, setVideoUrl] = useState(null);
   const [audioUrl, setAudioUrl] = useState(null);
-  const [fileType, setFileType] = useState(null); // 'video' or 'audio'
+  const [imageUrl, setImageUrl] = useState(null);
+  const [fileType, setFileType] = useState(null); // 'video', 'audio', or 'image'
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(null);
   const [speed, setSpeed] = useState(1.0);
@@ -30,7 +31,7 @@ function App() {
   const [outputFormat, setOutputFormat] = useState('mp4');
   const [audioOutputFormat, setAudioOutputFormat] = useState('mp3');
   const [resolution, setResolution] = useState('');
-  const [customResolution, setCustomResolution] = useState({ width: '', height: '' });
+  const [customResolution, setCustomResolution] = useState('');
   const [rotation, setRotation] = useState(0);
   const [flipHorizontal, setFlipHorizontal] = useState(false);
   const [flipVertical, setFlipVertical] = useState(false);
@@ -40,6 +41,13 @@ function App() {
   const [fadeIn, setFadeIn] = useState(0);
   const [fadeOut, setFadeOut] = useState(0);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
+  
+  // Image-specific states
+  const [imageFormat, setImageFormat] = useState('jpg');
+  const [imageResolution, setImageResolution] = useState('');
+  const [customImageResolution, setCustomImageResolution] = useState('');
+  const [imageQuality, setImageQuality] = useState(90);
+  const [isImageLoading, setIsImageLoading] = useState(false);
   
   // Estados para gestión de archivos
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -57,6 +65,7 @@ function App() {
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const audioRef = useRef(null);
+  const imageRef = useRef(null);
   const progressBarRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -110,6 +119,29 @@ function App() {
       audio.removeEventListener('error', handleError);
     };
   }, [audioUrl]);
+
+  // Detectar cuando la imagen se ha cargado
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image) return;
+
+    const handleLoad = () => {
+      setIsImageLoading(false);
+    };
+
+    const handleError = () => {
+      setIsImageLoading(false);
+      setError('Error al cargar la imagen');
+    };
+
+    image.addEventListener('load', handleLoad);
+    image.addEventListener('error', handleError);
+
+    return () => {
+      image.removeEventListener('load', handleLoad);
+      image.removeEventListener('error', handleError);
+    };
+  }, [imageUrl]);
 
   // Efectos para control de vídeo
   useEffect(() => {
@@ -300,7 +332,7 @@ function App() {
 
 
   const handleFileSelect = (file) => {
-    if (file && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
+    if (file && (file.type.startsWith('video/') || file.type.startsWith('audio/') || file.type.startsWith('image/'))) {
       setSelectedFile(file);
       setError(null);
       setSuccess(null);
@@ -309,14 +341,17 @@ function App() {
       // Determinar tipo de archivo
       const isVideo = file.type.startsWith('video/');
       const isAudio = file.type.startsWith('audio/');
+      const isImage = file.type.startsWith('image/');
       
-      setFileType(isVideo ? 'video' : 'audio');
+      setFileType(isVideo ? 'video' : isAudio ? 'audio' : 'image');
       
       // Mostrar spinner de carga
       if (isVideo) {
         setIsVideoLoading(true);
-      } else {
+      } else if (isAudio) {
         setIsAudioLoading(true);
+      } else {
+        setIsImageLoading(true);
       }
       
       // Crear URL para preview
@@ -324,9 +359,15 @@ function App() {
       if (isVideo) {
         setVideoUrl(url);
         setAudioUrl(null);
-      } else {
+        setImageUrl(null);
+      } else if (isAudio) {
         setAudioUrl(url);
         setVideoUrl(null);
+        setImageUrl(null);
+      } else {
+        setImageUrl(url);
+        setVideoUrl(null);
+        setAudioUrl(null);
       }
       
       // Resetear controles
@@ -337,9 +378,17 @@ function App() {
       setFadeIn(0);
       setFadeOut(0);
       
+      // Resetear controles específicos de imagen
+      setImageFormat('jpg');
+      setImageResolution('');
+      setCustomImageResolution('');
+      setImageQuality(90);
+      
       // Configurar formato de descarga según tipo de archivo
       if (isAudio) {
         setDownloadFormat('audio-only');
+      } else if (isImage) {
+        setDownloadFormat('image-only');
       } else {
         setDownloadFormat('video+audio');
       }
@@ -347,7 +396,7 @@ function App() {
       // Subir archivo al servidor
       uploadFile(file);
     } else {
-      setError('Por favor selecciona un archivo de vídeo o audio válido');
+      setError('Por favor selecciona un archivo de vídeo, audio o imagen válido');
     }
   };
 
@@ -397,6 +446,18 @@ function App() {
     setSuccess(null);
 
     try {
+      // Construir resolución final para video
+      let finalResolution = resolution;
+      if (resolution === 'custom' && customResolution.trim()) {
+        finalResolution = `custom:${customResolution.trim()}`;
+      }
+      
+      // Construir resolución final para imagen
+      let finalImageResolution = imageResolution;
+      if (imageResolution === 'custom' && customImageResolution.trim()) {
+        finalImageResolution = `custom:${customImageResolution.trim()}`;
+      }
+
       const processData = {
         file_id: fileId,
         start_time: startTime,
@@ -404,14 +465,18 @@ function App() {
         speed: speed,
         format: downloadFormat,
         output_format: fileType === 'video' ? outputFormat : audioOutputFormat,
-        resolution: resolution || null,
+        resolution: finalResolution || null,
         rotation: rotation,
         flip_horizontal: flipHorizontal,
         flip_vertical: flipVertical,
         // Audio-specific parameters
         volume: volume,
         fade_in: fadeIn,
-        fade_out: fadeOut
+        fade_out: fadeOut,
+        // Image-specific parameters
+        image_format: imageFormat,
+        image_resolution: finalImageResolution || null,
+        image_quality: imageQuality
       };
 
       const response = await axios.post(`${API_BASE_URL}/process`, processData);
@@ -436,6 +501,18 @@ function App() {
     setSuccess(null);
 
     try {
+      // Construir resolución final para video
+      let finalResolution = resolution;
+      if (resolution === 'custom' && customResolution.trim()) {
+        finalResolution = `custom:${customResolution.trim()}`;
+      }
+      
+      // Construir resolución final para imagen
+      let finalImageResolution = imageResolution;
+      if (imageResolution === 'custom' && customImageResolution.trim()) {
+        finalImageResolution = `custom:${customImageResolution.trim()}`;
+      }
+
       const processData = {
         file_id: fileId,
         start_time: startTime,
@@ -443,14 +520,18 @@ function App() {
         speed: speed,
         format: downloadFormat,
         output_format: fileType === 'video' ? outputFormat : audioOutputFormat,
-        resolution: resolution || null,
+        resolution: finalResolution || null,
         rotation: rotation,
         flip_horizontal: flipHorizontal,
         flip_vertical: flipVertical,
         // Audio-specific parameters
         volume: volume,
         fade_in: fadeIn,
-        fade_out: fadeOut
+        fade_out: fadeOut,
+        // Image-specific parameters
+        image_format: imageFormat,
+        image_resolution: finalImageResolution || null,
+        image_quality: imageQuality
       };
 
       const response = await axios.post(`${API_BASE_URL}/process`, processData);
@@ -508,14 +589,17 @@ function App() {
     // Determinar tipo de archivo basado en la extensión
     const isVideo = /\.(mp4|avi|mov|mkv|webm|flv)$/i.test(file.filename);
     const isAudio = /\.(mp3|wav|flac|aac|ogg|m4a)$/i.test(file.filename);
+    const isImage = /\.(jpg|jpeg|png|gif|bmp|webp|tiff)$/i.test(file.filename);
     
-    setFileType(isVideo ? 'video' : 'audio');
+    setFileType(isVideo ? 'video' : isAudio ? 'audio' : 'image');
     
     // Mostrar spinner de carga
     if (isVideo) {
       setIsVideoLoading(true);
-    } else {
+    } else if (isAudio) {
       setIsAudioLoading(true);
+    } else {
+      setIsImageLoading(true);
     }
     
     // Resetear controles de edición primero
@@ -530,9 +614,17 @@ function App() {
     setVideoDuration(0);
     setAudioDuration(0);
     
+    // Resetear controles específicos de imagen
+    setImageFormat('jpg');
+    setImageResolution('');
+    setCustomImageResolution('');
+    setImageQuality(90);
+    
     // Configurar formato de descarga según tipo de archivo
     if (isAudio) {
       setDownloadFormat('audio-only');
+    } else if (isImage) {
+      setDownloadFormat('image-only');
     } else {
       setDownloadFormat('video+audio');
     }
@@ -542,16 +634,22 @@ function App() {
     if (isVideo) {
       setVideoUrl(fileUrl);
       setAudioUrl(null);
-    } else {
+      setImageUrl(null);
+    } else if (isAudio) {
       setAudioUrl(fileUrl);
       setVideoUrl(null);
+      setImageUrl(null);
+    } else {
+      setImageUrl(fileUrl);
+      setVideoUrl(null);
+      setAudioUrl(null);
     }
     
     // Crear objeto de archivo simulado para compatibilidad
     const mockFile = {
       name: file.filename,
       size: file.size,
-      type: isVideo ? 'video/mp4' : 'audio/mp3'
+      type: isVideo ? 'video/mp4' : isAudio ? 'audio/mp3' : 'image/jpeg'
     };
     setSelectedFile(mockFile);
     
@@ -636,6 +734,7 @@ function App() {
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
 
   // Funciones de control de audio/video
   const togglePlayPause = () => {
@@ -786,8 +885,8 @@ function App() {
   return (
     <div className="container">
       <div className="header">
-        <h1>🎵🎬 Media Editor</h1>
-        <p>Edita tus audios y vídeos de forma sencilla y rápida</p>
+        <h1>🎵🎬📸 Media Editor</h1>
+        <p>Edita tus audios, vídeos e imágenes de forma sencilla y rápida</p>
       </div>
 
       <div className="main-content">
@@ -798,14 +897,14 @@ function App() {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          <div className="upload-icon">🎵🎬</div>
+          <div className="upload-icon">🎵🎬📸</div>
           <div className="upload-text">
-            Arrastra tu audio o vídeo aquí o haz clic para seleccionar
+            Arrastra tu audio, vídeo o imagen aquí o haz clic para seleccionar
           </div>
           <input
             ref={fileInputRef}
             type="file"
-            accept="video/*,audio/*"
+            accept="video/*,audio/*,image/*"
             onChange={(e) => handleFileSelect(e.target.files[0])}
             className="file-input"
           />
@@ -813,7 +912,7 @@ function App() {
             className="upload-btn"
             onClick={() => fileInputRef.current?.click()}
           >
-            Seleccionar Audio/Video
+            Seleccionar Archivo
           </button>
         </div>
 
@@ -836,10 +935,10 @@ function App() {
         {/* Información del archivo */}
         {selectedFile && (
           <div className="file-info">
-            <h3>{fileType === 'video' ? '🎬' : '🎵'} Archivo seleccionado</h3>
+            <h3>{fileType === 'video' ? '🎬' : fileType === 'audio' ? '🎵' : '📸'} Archivo seleccionado</h3>
             <p><strong>Nombre:</strong> {selectedFile.name}</p>
             <p><strong>Tamaño:</strong> {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
-            <p><strong>Tipo:</strong> {fileType === 'video' ? 'Video' : 'Audio'} - {selectedFile.type}</p>
+            <p><strong>Tipo:</strong> {fileType === 'video' ? 'Video' : fileType === 'audio' ? 'Audio' : 'Imagen'} - {selectedFile.type}</p>
           </div>
         )}
 
@@ -1090,23 +1189,53 @@ function App() {
           </div>
         )}
 
+        {/* Preview de imagen */}
+        {imageUrl && (
+          <div className="image-preview">
+            <div className="image-container">
+              <div className="image-display">
+                <img
+                  ref={imageRef}
+                  src={imageUrl}
+                  alt="Preview"
+                  crossOrigin="anonymous"
+                  className="main-image"
+                />
+                
+                {/* Spinner de carga */}
+                {isImageLoading && (
+                  <div className="image-loading-overlay">
+                    <div className="image-loading-spinner">
+                      <div className="spinner"></div>
+                      <div className="spinner-text">Cargando imagen...</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Controles de edición */}
         {fileId && (
           <div className="controls-section">
             <h2>🎛️ Controles de Edición</h2>
             
-            {/* Información de selección */}
-            <div className="selection-info">
-              <span className="selection-time">
-                {formatTime(startTime)} - {formatTime(endTime || (fileType === 'video' ? videoDuration : audioDuration))}
-              </span>
-              <span className="selection-duration">
-                {formatTime((endTime || (fileType === 'video' ? videoDuration : audioDuration)) - startTime)}
-              </span>
-            </div>
+            {/* Información de selección - Solo para audio y video */}
+            {fileType !== 'image' && (
+              <div className="selection-info">
+                <span className="selection-time">
+                  {formatTime(startTime)} - {formatTime(endTime || (fileType === 'video' ? videoDuration : audioDuration))}
+                </span>
+                <span className="selection-duration">
+                  {formatTime((endTime || (fileType === 'video' ? videoDuration : audioDuration)) - startTime)}
+                </span>
+              </div>
+            )}
 
-            {/* Recorte de tiempo y velocidad */}
-            <div className="time-speed-row">
+            {/* Recorte de tiempo y velocidad - Solo para audio y video */}
+            {fileType !== 'image' && (
+              <div className="time-speed-row">
               <div className="time-controls">
                 <label>Recorte</label>
                 <div className="time-inputs">
@@ -1220,6 +1349,7 @@ function App() {
                 </div>
               </div>
             </div>
+            )}
 
             {/* Controles de audio específicos */}
             {fileType === 'audio' && (
@@ -1281,21 +1411,127 @@ function App() {
               </div>
             )}
 
-            {/* Formato, Resolución y Descarga */}
-            <div className="format-resolution-row">
-              {/* Formato de descarga */}
-              <div className="control-group">
-                <label>Descarga</label>
-                <select
-                  value={downloadFormat}
-                  onChange={(e) => setDownloadFormat(e.target.value)}
-                  className="format-select"
-                >
-                  <option value="video+audio">Vídeo + Audio</option>
-                  <option value="video-only">Solo Vídeo</option>
-                  <option value="audio-only">Solo Audio</option>
-                </select>
+            {/* Controles de imagen específicos */}
+            {fileType === 'image' && (
+              <div className="image-controls-row">
+                <div className="image-format-controls">
+                  <label>Formato de Imagen</label>
+                  <select
+                    value={imageFormat}
+                    onChange={(e) => setImageFormat(e.target.value)}
+                    className="image-format-select"
+                  >
+                    <option value="jpg">JPG</option>
+                    <option value="png">PNG</option>
+                    <option value="webp">WebP</option>
+                    <option value="bmp">BMP</option>
+                    <option value="tiff">TIFF</option>
+                  </select>
+                </div>
+                
+                <div className="image-resolution-controls">
+                  <label>Resolución</label>
+                  <select
+                    value={imageResolution}
+                    onChange={(e) => {
+                      setImageResolution(e.target.value);
+                      // Limpiar inputs personalizados si se selecciona otra opción
+                      if (e.target.value !== 'custom') {
+                        setCustomImageResolution('');
+                      }
+                    }}
+                    className="image-resolution-select"
+                  >
+                    <option value="">Original</option>
+                    
+                    {/* Resoluciones estándar */}
+                    <optgroup label="🖥️ Resoluciones Estándar">
+                      <option value="1920x1080">1920x1080 (Full HD)</option>
+                      <option value="1280x720">1280x720 (HD)</option>
+                      <option value="854x480">854x480 (SD)</option>
+                      <option value="640x480">640x480 (VGA)</option>
+                      <option value="320x240">320x240 (QVGA)</option>
+                    </optgroup>
+                    
+                    {/* Resoluciones para redes sociales */}
+                    <optgroup label="📱 Redes Sociales">
+                      <option value="1080x1080">1080x1080 (Instagram Post)</option>
+                      <option value="1080x1350">1080x1350 (Instagram Portrait)</option>
+                      <option value="1080x1920">1080x1920 (Instagram Story)</option>
+                      <option value="1200x630">1200x630 (Facebook Cover)</option>
+                      <option value="1024x512">1024x512 (Twitter Header)</option>
+                    </optgroup>
+                    
+                    {/* Resoluciones de impresión */}
+                    <optgroup label="🖨️ Impresión">
+                      <option value="3508x2480">A4 (300 DPI)</option>
+                      <option value="2480x3508">A4 Vertical (300 DPI)</option>
+                      <option value="1754x1240">A4 (150 DPI)</option>
+                      <option value="1240x1754">A4 Vertical (150 DPI)</option>
+                    </optgroup>
+                    
+                    <option value="custom">Personalizado</option>
+                  </select>
+                  
+                  {imageResolution === 'custom' && (
+                    <div className="custom-resolution-inputs">
+                      <input
+                        type="text"
+                        placeholder="Ej: 800x600"
+                        value={customImageResolution}
+                        onChange={(e) => setCustomImageResolution(e.target.value)}
+                        className="custom-resolution-input"
+                      />
+                      <small>Formato: ancho x alto (ej: 800x600)</small>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="image-quality-controls">
+                  <label>Calidad ({imageQuality}%)</label>
+                  <div className="quality-slider-container">
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      step="5"
+                      value={imageQuality}
+                      onChange={(e) => setImageQuality(parseInt(e.target.value))}
+                      className="quality-slider"
+                    />
+                    <div className="quality-labels">
+                      <span>Baja</span>
+                      <span>Media</span>
+                      <span>Alta</span>
+                    </div>
+                  </div>
+                  <div className="quality-info">
+                    <small>
+                      {imageQuality < 30 ? 'Archivo pequeño, calidad baja' :
+                       imageQuality < 70 ? 'Equilibrio entre tamaño y calidad' :
+                       'Archivo grande, máxima calidad'}
+                    </small>
+                  </div>
+                </div>
               </div>
+            )}
+
+            {/* Formato, Resolución y Descarga - Solo para audio y video */}
+            {fileType !== 'image' && (
+              <div className="format-resolution-row">
+                {/* Formato de descarga */}
+                <div className="control-group">
+                  <label>Descarga</label>
+                  <select
+                    value={downloadFormat}
+                    onChange={(e) => setDownloadFormat(e.target.value)}
+                    className="format-select"
+                  >
+                    <option value="video+audio">Vídeo + Audio</option>
+                    <option value="video-only">Solo Vídeo</option>
+                    <option value="audio-only">Solo Audio</option>
+                  </select>
+                </div>
 
               {/* Formato de salida */}
               {downloadFormat !== 'audio-only' && fileType === 'video' && (
@@ -1341,7 +1577,13 @@ function App() {
                   <label>Resolución</label>
                   <select
                     value={resolution}
-                    onChange={(e) => setResolution(e.target.value)}
+                    onChange={(e) => {
+                      setResolution(e.target.value);
+                      // Limpiar inputs personalizados si se selecciona otra opción
+                      if (e.target.value !== 'custom') {
+    setCustomResolution('');
+                      }
+                    }}
                     className="resolution-select"
                   >
                     <option value="">Original</option>
@@ -1384,20 +1626,16 @@ function App() {
                   </select>
                   
                   {resolution === 'custom' && (
-                    <input
-                      type="text"
-                      placeholder="Ancho x Alto (ej: 1920x1080)"
-                      value={customResolution.width && customResolution.height ? `${customResolution.width}x${customResolution.height}` : ''}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value.includes('x')) {
-                          const [width, height] = value.split('x');
-                          setCustomResolution({ width: width.trim(), height: height.trim() });
-                          setResolution(`custom:${width.trim()}x${height.trim()}`);
-                        }
-                      }}
-                      className="custom-resolution-input"
-                    />
+                    <div className="custom-resolution-inputs">
+                      <input
+                        type="text"
+                        placeholder="Ej: 1920x1080"
+                        value={customResolution}
+                        onChange={(e) => setCustomResolution(e.target.value)}
+                        className="custom-resolution-input"
+                      />
+                      <small>Formato: ancho x alto (ej: 1920x1080)</small>
+                    </div>
                   )}
                 </div>
               )}
@@ -1438,7 +1676,7 @@ function App() {
                 </div>
               )}
             </div>
-
+            )}
 
             {/* Botón de procesamiento y descarga */}
             <button
@@ -1447,7 +1685,7 @@ function App() {
               disabled={isProcessing}
             >
               {isProcessing && <span className="loading"></span>}
-              {isProcessing ? 'Procesando...' : `${fileType === 'video' ? '🎬' : '🎵'} Procesar y Descargar`}
+              {isProcessing ? 'Procesando...' : `${fileType === 'video' ? '🎬' : fileType === 'audio' ? '🎵' : '📸'} Procesar y Descargar`}
             </button>
           </div>
         )}
@@ -1620,3 +1858,5 @@ function App() {
 }
 
 export default App;
+
+

@@ -28,6 +28,10 @@ class MediaProcessRequest(BaseModel):
     volume: float = 1.0
     fade_in: float = 0.0
     fade_out: float = 0.0
+    # Parámetros específicos de imagen
+    image_format: Optional[str] = None  # jpg, png, webp, bmp, tiff
+    image_resolution: Optional[str] = None  # "1920x1080", etc.
+    image_quality: int = 90  # 10-100
 
 # Configurar CORS para permitir requests desde React
 app.add_middleware(
@@ -69,9 +73,9 @@ def check_ffmpeg():
 
 @app.post("/upload")
 async def upload_media(file: UploadFile = File(...)):
-    """Subir un archivo de audio o vídeo"""
-    if not (file.content_type.startswith('video/') or file.content_type.startswith('audio/')):
-        raise HTTPException(status_code=400, detail="Solo se permiten archivos de audio y vídeo")
+    """Subir un archivo de audio, vídeo o imagen"""
+    if not (file.content_type.startswith('video/') or file.content_type.startswith('audio/') or file.content_type.startswith('image/')):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos de audio, vídeo e imagen")
     
     # Generar nombre único para el archivo
     file_id = str(uuid.uuid4())
@@ -105,6 +109,10 @@ async def process_media(request: MediaProcessRequest):
     volume = request.volume
     fade_in = request.fade_in
     fade_out = request.fade_out
+    # Parámetros de imagen
+    image_format = request.image_format
+    image_resolution = request.image_resolution
+    image_quality = request.image_quality
     
     # Buscar archivo original
     upload_path = None
@@ -115,6 +123,12 @@ async def process_media(request: MediaProcessRequest):
     
     if not upload_path or not os.path.exists(upload_path):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    
+    # Determinar si es una imagen
+    is_image = upload_path.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff'))
+    
+    if is_image:
+        return await process_image(upload_path, file_id, image_format, image_resolution, image_quality)
     
     # Determinar extensión y configuración según formato de contenido
     if content_format == "audio-only":
@@ -259,6 +273,66 @@ async def process_media(request: MediaProcessRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando vídeo: {str(e)}")
 
+async def process_image(upload_path: str, file_id: str, image_format: str = None, image_resolution: str = None, image_quality: int = 90):
+    """Procesar imagen con las opciones especificadas"""
+    
+    # Determinar formato de salida
+    if not image_format:
+        # Mantener formato original
+        original_extension = os.path.splitext(upload_path)[1].lower()
+        if original_extension in ['.jpg', '.jpeg']:
+            image_format = 'jpg'
+        elif original_extension == '.png':
+            image_format = 'png'
+        elif original_extension == '.webp':
+            image_format = 'webp'
+        elif original_extension == '.bmp':
+            image_format = 'bmp'
+        elif original_extension == '.tiff':
+            image_format = 'tiff'
+        else:
+            image_format = 'jpg'  # Por defecto
+    
+    output_filename = f"processed_{file_id}.{image_format}"
+    output_path = os.path.join(OUTPUT_DIR, output_filename)
+    
+    # Construir comando FFmpeg para procesar imagen
+    cmd = ["ffmpeg", "-i", upload_path]
+    
+    # Aplicar cambio de resolución si se especifica
+    if image_resolution:
+        if image_resolution.startswith("custom:"):
+            resolution_value = image_resolution.replace("custom:", "")
+        else:
+            resolution_value = image_resolution
+        cmd.extend(["-vf", f"scale={resolution_value}"])
+    
+    # Configurar calidad según formato
+    if image_format in ['jpg', 'jpeg']:
+        # Para JPEG, usar -q:v (1-31, donde menor número = mejor calidad)
+        quality_value = max(1, min(31, int(31 - (image_quality - 10) * 30 / 90)))
+        cmd.extend(["-q:v", str(quality_value)])
+    elif image_format == 'png':
+        # PNG es sin pérdida, pero podemos controlar la compresión
+        compression = max(0, min(9, int(9 - image_quality * 9 / 100)))
+        cmd.extend(["-compression_level", str(compression)])
+    elif image_format == 'webp':
+        # WebP soporta calidad directa
+        cmd.extend(["-quality", str(image_quality)])
+    
+    cmd.extend(["-y", output_path])
+    
+    try:
+        # Ejecutar FFmpeg
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Error procesando imagen: {result.stderr}")
+        
+        return {"output_filename": output_filename, "file_id": file_id}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error procesando imagen: {str(e)}")
+
 @app.get("/uploads/{filename}")
 async def serve_uploaded_file(filename: str):
     """Servir archivo subido"""
@@ -290,6 +364,18 @@ async def serve_uploaded_file(filename: str):
         media_type = 'audio/ogg'
     elif filename.lower().endswith('.m4a'):
         media_type = 'audio/mp4'
+    elif filename.lower().endswith(('.jpg', '.jpeg')):
+        media_type = 'image/jpeg'
+    elif filename.lower().endswith('.png'):
+        media_type = 'image/png'
+    elif filename.lower().endswith('.gif'):
+        media_type = 'image/gif'
+    elif filename.lower().endswith('.bmp'):
+        media_type = 'image/bmp'
+    elif filename.lower().endswith('.webp'):
+        media_type = 'image/webp'
+    elif filename.lower().endswith('.tiff'):
+        media_type = 'image/tiff'
     else:
         media_type = 'application/octet-stream'  # Por defecto
     
@@ -337,6 +423,18 @@ async def download_file(filename: str):
         media_type = 'audio/ogg'
     elif filename.lower().endswith('.m4a'):
         media_type = 'audio/mp4'
+    elif filename.lower().endswith(('.jpg', '.jpeg')):
+        media_type = 'image/jpeg'
+    elif filename.lower().endswith('.png'):
+        media_type = 'image/png'
+    elif filename.lower().endswith('.gif'):
+        media_type = 'image/gif'
+    elif filename.lower().endswith('.bmp'):
+        media_type = 'image/bmp'
+    elif filename.lower().endswith('.webp'):
+        media_type = 'image/webp'
+    elif filename.lower().endswith('.tiff'):
+        media_type = 'image/tiff'
     else:
         media_type = 'application/octet-stream'  # Por defecto
     
